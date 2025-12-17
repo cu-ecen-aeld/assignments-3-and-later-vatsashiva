@@ -1,4 +1,11 @@
 #include "systemcalls.h"
+#include <stdarg.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <stdio.h>
+#include <fcntl.h>
+#include <stdbool.h>
+#include <stdlib.h> 
 
 /**
  * @param cmd the command to execute with system()
@@ -17,6 +24,8 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
+  if (system(cmd) != 0)   // pointer to null tereminated string containing the command to execute 
+        return false;
     return true;
 }
 
@@ -59,8 +68,49 @@ bool do_exec(int count, ...)
  *
 */
 
-    va_end(args);
-
+    pid_t pid = fork();
+    if (pid == -1)
+        {
+           perror("failed to create child");
+           va_end(args);                              //releases associated resources 
+           return false ;
+        }
+        
+   else if(pid == 0)
+       {
+      if (execv(command[0] ,command) == -1)  //runs another program inside child , execv never return on sucess
+        { 
+         perror("exec failure, new process not created");
+        _exit(127);  // 127- command not failed / execution failed  
+        }
+      
+      }
+    
+   else
+    {
+    
+    int status ;
+    
+   //child process termination wait
+   
+   if(waitpid(pid, &status,0)< 0)
+   {
+      va_end(args);
+      return false ;
+   }
+   
+   //child preocess exit check 
+   
+   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) 
+   {
+      perror("waitpid");
+      va_end(args);
+      return false;
+   }
+   
+   }
+   
+   va_end(args);
     return true;
 }
 
@@ -91,8 +141,62 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   redirect standard out to a file specified by outputfile.
  *   The rest of the behaviour is same as do_exec()
  *
-*/
+*/  
 
+    pid_t pid = fork();
+    
+    if (pid==-1)
+        {
+           perror("failed to create child");
+           va_end(args);
+           return false ;
+        }
+        
+    if(pid ==0)
+    {
+      int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);   //0644--> -rw-r--r--
+      if (fd < 0) 
+      { 
+        perror("open"); 
+        _exit(127) ;
+      }
+ 
+// check if redirection failed   
+      if (dup2(fd, STDOUT_FILENO) < 0)
+      { 
+       perror("dup2");   
+       close(fd);
+       _exit(127); 
+       }
+       
+      close(fd) ;
+       
+      if (execv(command[0] ,command) == -1)  
+      { 
+         perror("execv");
+        _exit(127);  // command not executed 
+      }
+       
+     }
+
+      
+      
+      int status;
+      
+      if( waitpid(pid, &status,0)< 0)
+      {
+       va_end(args);
+       return false ;
+   }
+   
+   //child preocess exit check , status return by kernel 
+   
+   if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) 
+   {
+      va_end(args);
+      return false;
+   }
+   
     va_end(args);
 
     return true;
