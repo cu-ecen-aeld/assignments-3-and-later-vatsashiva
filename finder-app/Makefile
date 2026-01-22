@@ -1,4 +1,6 @@
-CC := $(CROSS_COMPILE)gcc
+CC ?= gcc
+
+default: writer
 
 writer: writer.o
 	$(CC) writer.o -o writer
