@@ -52,8 +52,7 @@ fi
 
 # Run the assignment test
 "$ASSIGNMENT_TEST" "$test_dir"
-assign_rc=$?:
-ll
+assign_rc=$?
 if [ $assign_rc -eq 0 ]; then
     echo "Assignment test ${assignment} complete with success"
 else
