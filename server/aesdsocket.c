@@ -14,6 +14,9 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include "aesd_ioctl.h"
+
 
 #define PORT 9000
 
@@ -185,21 +188,50 @@ static void *client_thread(void *arg)
     }
 
     /* Write */
-	size_t written = 0;
-	while (written < write_len) {
-    	ssize_t n = write(file_fd, accum + written, write_len - written);
-    	if (n <= 0) {
-        syslog(LOG_ERR, "write failed");
+
+#if USE_AESD_CHAR_DEVICE
+if (strncmp(accum, IOCTL_PREFIX, strlen(IOCTL_PREFIX)) == 0) {
+
+    struct aesd_seekto seekto;
+
+    if (sscanf(accum + strlen(IOCTL_PREFIX), "%u,%u",
+               &seekto.write_cmd,
+               &seekto.write_cmd_offset) != 2) {
+        syslog(LOG_ERR, "Invalid IOCTL format");
         close(file_fd);
         pthread_mutex_unlock(&file_mutex);
         goto cleanup;
     }
-    written += n;
-}
 
+    if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
+        syslog(LOG_ERR, "ioctl failed: %s", strerror(errno));
+        close(file_fd);
+        pthread_mutex_unlock(&file_mutex);
+        goto cleanup;
+    }
 
-if (lseek(file_fd, 0, SEEK_SET) < 0) {
-    syslog(LOG_WARNING, "lseek not supported, continuing");
+} else
+#endif
+{
+    /* Normal write path */
+    size_t written = 0;
+    while (written < write_len) {
+        ssize_t n = write(file_fd, accum + written, write_len - written);
+        if (n <= 0) {
+            syslog(LOG_ERR, "write failed");
+            close(file_fd);
+            pthread_mutex_unlock(&file_mutex);
+            goto cleanup;
+        }
+        written += n;
+    }
+
+#if !USE_AESD_CHAR_DEVICE
+    /* Only for file mode */
+    if (lseek(file_fd, 0, SEEK_SET) < 0) {
+        syslog(LOG_ERR, "lseek failed");
+    }
+#endif
 }
 
 /* Read + send */
