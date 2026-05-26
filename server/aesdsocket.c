@@ -31,6 +31,7 @@
 #endif
 
 #define BUF_SIZE 1024
+#define IOCTL_PREFIX "AESDCHAR_IOCSEEKTO:"
 
 static int server_fd = -1;
 static volatile sig_atomic_t exit_requested = 0;
@@ -209,6 +210,10 @@ if (strncmp(accum, IOCTL_PREFIX, strlen(IOCTL_PREFIX)) == 0) {
         pthread_mutex_unlock(&file_mutex);
         goto cleanup;
     }
+    
+    if (lseek(file_fd, 0, SEEK_SET) < 0) {
+    syslog(LOG_DEBUG, "lseek failed after ioctl");
+    }
 
 } else
 #endif
@@ -226,12 +231,10 @@ if (strncmp(accum, IOCTL_PREFIX, strlen(IOCTL_PREFIX)) == 0) {
         written += n;
     }
 
-#if !USE_AESD_CHAR_DEVICE
     /* Only for file mode */
     if (lseek(file_fd, 0, SEEK_SET) < 0) {
-        syslog(LOG_ERR, "lseek failed");
+        syslog(LOG_DEBUG, "lseek failed");
     }
-#endif
 }
 
 /* Read + send */
