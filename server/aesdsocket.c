@@ -211,9 +211,6 @@ if (strncmp(accum, IOCTL_PREFIX, strlen(IOCTL_PREFIX)) == 0) {
         goto cleanup;
     }
     
-    if (lseek(file_fd, 0, SEEK_SET) < 0) {
-    syslog(LOG_DEBUG, "lseek failed after ioctl");
-    }
 
 } else
 #endif
