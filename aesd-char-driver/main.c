@@ -84,6 +84,8 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         copied_total += bytes_to_copy;
         *f_pos += bytes_to_copy;
     }
+    
+     retval = copied_total;
 
 out:
     mutex_unlock(&dev->lock);
