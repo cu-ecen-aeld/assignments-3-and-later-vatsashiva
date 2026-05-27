@@ -53,7 +53,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     struct aesd_dev          *dev = filp->private_data;
     struct aesd_buffer_entry *entry;
     size_t                    entry_offset;     /* byte index inside entry */
-    size_t                    bytes_available;
+    size_t                    copied_total = 0;
     size_t                    bytes_to_copy;
     ssize_t                   retval = 0;
 
@@ -62,28 +62,35 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     if (mutex_lock_interruptible(&dev->lock))
         return -ERESTARTSYS;
 
-    entry = aesd_circular_buffer_find_entry_offset_for_fpos(
-                &dev->buffer, (size_t)*f_pos, &entry_offset);
+     while (copied_total < count) {
+        entry = aesd_circular_buffer_find_entry_offset_for_fpos(
+                    &dev->buffer,
+                    (size_t)*f_pos,
+                    &entry_offset);
+
     if (!entry)
-        goto out; 
+        break;
+    
+    bytes_to_copy = min(count - copied_total,
+                            entry->size - entry_offset);
 
-    bytes_available = entry->size - entry_offset;
-    bytes_to_copy   = min(count, bytes_available);
+        if (copy_to_user(buf + copied_total,
+                         entry->buffptr + entry_offset,
+                         bytes_to_copy)) {
+            retval = -EFAULT;
+            goto out;
+        }
 
-    if (copy_to_user(buf, entry->buffptr + entry_offset, bytes_to_copy)) {
-        retval = -EFAULT;
-        goto out;
+        copied_total += bytes_to_copy;
+        *f_pos += bytes_to_copy;
     }
-
-    *f_pos += bytes_to_copy;
-    retval  = bytes_to_copy;
 
 out:
     mutex_unlock(&dev->lock);
     return retval;
 }
 
-ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
+ssize_esd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
    struct aesd_dev          *dev = filp->private_data;
@@ -139,15 +146,12 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
          * Add to circular buffer.  If the buffer was full,
          * add_entry returns the oldest buffptr so we can free it.
          */
-        evicted_ptr = NULL;
-        if (dev->buffer.full)
-            evicted_ptr = dev->buffer.entry[dev->buffer.out_offs].buffptr;
+	evicted_ptr = aesd_circular_buffer_add_entry(&dev->buffer, &new_entry);
 
-        aesd_circular_buffer_add_entry(&dev->buffer, &new_entry); 
-        
-        if (evicted_ptr)
-            kfree(evicted_ptr);
- 
+	if (evicted_ptr)
+    		kfree(evicted_ptr);
+
+
         dev->working_buf_size -= commit_len;
         if (dev->working_buf_size) {
             memmove(dev->working_buf,
@@ -221,14 +225,13 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     struct aesd_dev *dev = filp->private_data;
     struct aesd_seekto seekto;
-    size_t index;
     size_t entry_count;
+    size_t index;
+    size_t actual_index;
     size_t cumulative_size = 0;
-    loff_t new_pos = 0;
 
     if (cmd != AESDCHAR_IOCSEEKTO)
         return -EINVAL;
-
 
     if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)))
         return -EFAULT;
@@ -239,41 +242,32 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     entry_count = dev->buffer.full ?
         AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED : dev->buffer.in_offs;
 
-
     if (seekto.write_cmd >= entry_count) {
         mutex_unlock(&dev->lock);
         return -EINVAL;
     }
 
+    for (index = 0; index < seekto.write_cmd; index++) {
+        actual_index =
+            (dev->buffer.out_offs + index) %
+            AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
-    for (index = 0; index < entry_count; index++) {
-
-        size_t actual_index =
-            (dev->buffer.out_offs + index) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
-
-        struct aesd_buffer_entry *entry =
-            &dev->buffer.entry[actual_index];
-
-        if (index == seekto.write_cmd) {
-
-            /* Validate offset inside entry */
-            if (seekto.write_cmd_offset >= entry->size) {
-                mutex_unlock(&dev->lock);
-                return -EINVAL;
-            }
-
-            new_pos = cumulative_size + seekto.write_cmd_offset;
-            filp->f_pos = new_pos;
-
-            mutex_unlock(&dev->lock);
-            return 0;
-        }
-
-        cumulative_size += entry->size;
+        cumulative_size += dev->buffer.entry[actual_index].size;
     }
 
+    actual_index =
+        (dev->buffer.out_offs + seekto.write_cmd) %
+        AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    if (seekto.write_cmd_offset >= dev->buffer.entry[actual_index].size) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    filp->f_pos = cumulative_size + seekto.write_cmd_offset;
+
     mutex_unlock(&dev->lock);
-    return -EINVAL;
+    return 0;
 }
 
 struct file_operations aesd_fops = {
