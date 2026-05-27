@@ -90,7 +90,7 @@ out:
     return retval;
 }
 
-ssize_esd_write(struct file *filp, const char __user *buf, size_t count,
+ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
    struct aesd_dev          *dev = filp->private_data;
